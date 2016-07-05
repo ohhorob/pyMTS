@@ -21,24 +21,39 @@ bytefilepath = 'mts-ssi-4-192.asc'
 
 # ISP2 Frame
 # 16 bit words in big endian order
+# 2 bytes, arriving in [Most-Significant], [Least-Significant]
 
 
 class HeaderWord(ctypes.BigEndianStructure):
+
+    MAGIC_MASK = 0xA280
+
     _fields_ = [
         # Low Byte
-        ('CLEAR07', c_uint8, 1),         # 07
-        ('LengthLow', c_uint8, 7),       # 06..00
+        ('CLEAR07',        c_uint8, 1),         # 07
+        ('LengthLow',      c_uint8, 7),       # 06..00
 
         # High Byte
-        ('HEADER15', c_uint8, 1),        # 15
-        ('Recording', c_uint8, 1),       # 14
-        ('CLEAR13', c_uint8, 1),         # 13
+        ('HEADER15',       c_uint8, 1),  # 15
+        ('Recording',      c_uint8, 1),  # 14
+        ('CLEAR13',        c_uint8, 1),  # 13
         ('DataOrResponse', c_uint8, 1),  # 12
-        ('LogCapable', c_uint8, 1),      # 11
-        ('RESERVED10', c_uint8, 1),      # 10
-        ('CLEAR09', c_uint8, 1),         # 09
-        ('LengthHigh', c_uint8, 1),      # 08
+        ('LogCapable',     c_uint8, 1),  # 11
+        ('RESERVED10',     c_uint8, 1),  # 10
+        ('CLEAR09',        c_uint8, 1),  # 09
+        ('LengthHigh',     c_uint8, 1),  # 08
     ]
+
+    def is_valid(self):
+        if self.HEADER15 == 0:
+            raise ValueError('Header start marker (15) not set.')
+        if self.CLEAR13 == 0:
+            raise ValueError('(13) not set')
+        if self.CLEAR09 == 0:
+            raise ValueError('(09) not set')
+        if self.CLEAR07 == 0:
+            raise ValueError('(07) not set')
+        return True
 
     def is_data(self):
         return self.DataOrResponse > 0
@@ -61,12 +76,11 @@ class MTSHeader(ctypes.Union):
     ]
     _anonymous_ = 'b'
 
-    MAGIC_MASK = 0xA280
-
     def __init__(self, *args, **kwargs):
         super(MTSHeader, self).__init__(*args, **kwargs)
         if 'word' in kwargs:
             self.word = kwargs['word']
+            self.b.is_valid()
 
     def word_count(self):
         return (self.b.LengthHigh << 7) | self.b.LengthLow
@@ -77,6 +91,7 @@ class MTSHeader(ctypes.Union):
             'Data' if self.b.is_data() else 'Response',
             self.b.length()
         )
+
 
 class FunctionBits(ctypes.BigEndianStructure):
     _fields_ = [
@@ -174,7 +189,7 @@ class MTSSubPacket(ctypes.Union):
     ]
 
 
-def scan_to_headerword(serial_input, maximum_bytes=99, header_magic=MTSHeader.MAGIC_MASK):
+def scan_to_headerword(serial_input, maximum_bytes=9999, header_magic=HeaderWord.MAGIC_MASK):
     """
     Consume bytes until header magic is found in a word
     :param serial_input:
@@ -185,15 +200,52 @@ def scan_to_headerword(serial_input, maximum_bytes=99, header_magic=MTSHeader.MA
 
     while headerword & header_magic != header_magic:
         # BlockingIOError
+        # Read a single byte
         nextbyte = serial_input.read(1)
         if len(nextbyte) == 0:
             raise BufferError("Reached end of stream")
-        headerword = (headerword << 8) | ord(nextbyte)
         bytecount += 1
+        # Take the low word and shift it high; Use OR to add this byte
+        nextint = ord(nextbyte)
+        headerword = ((headerword & 0x00FF) << 8) | nextint
+        try:
+            h = MTSHeader(word=headerword)
+        except ValueError as e:
+            print("Skipping invalid header word 0x{:04X}".format(headerword))
+            continue
+
+        print("Found header word. 0x{:04X}".format(headerword))
+        # print("Scanning word for header: 0x{:04X} & 0x{:04X} = 0x{:04X}".format(
+        #     headerword,
+        #     header_magic,
+        #     headerword & header_magic)
+        #       , file=sys.stderr
+        # )
         if 0 < maximum_bytes <= bytecount:
             raise BufferError("Failed to detect header word in serial stream")
 
     return headerword
+
+
+def scan_swappedwords(serial_input):
+    swappedword = 0x0000
+
+    while 1:
+        nextbyte = serial_input.read(1)
+        if len(nextbyte) == 0:
+            raise BufferError("Reached end of stream")
+
+        msb = ord(nextbyte)
+        swappedword = (msb << 8) | ((swappedword & 0xFF00) >> 8)
+
+        try:
+            h = MTSHeader(word=swappedword)
+        except ValueError as e:
+            print("Skipping invalid header word 0x{:04X}".format(swappedword))
+            continue
+
+        print("Found swapped header word. 0x{:04X}".format(swappedword))
+        print(" packet word length = {}".format(h.b.length()))
 
 
 def read_packets(serial_input):
@@ -217,7 +269,8 @@ def read_packets(serial_input):
 
 def captured_stream():
     return io.open(
-        bytefilepath,
+        # 'LOG00129.TXT',
+        'coldcap-LC2.ISP2',
         mode='rb',
         buffering=io.DEFAULT_BUFFER_SIZE
     )
@@ -264,10 +317,6 @@ def packet_tostring(packet):
 
 def dump(instream, outstream=None):
     # started = StampedMarker(0, time.time())
-    """
-
-    :type outstream: io.BufferedWriter
-    """
     packetmillis = 8000000 / 655360
     for i, packet in enumerate(read_packets(instream)):
         # now = time.time()
@@ -300,8 +349,10 @@ if __name__ == '__main__':
     outfile = io.open(outwrapper.name, mode='w+b' )
     print('Logging raw data to temp file: {}'.format(outwrapper.name), file=sys.stderr)
     try:
+        scan_swappedwords(captured_stream())
         dump(
-            live_stream('cu.usbserial'),
+            # live_stream('cu.usbserial'),
+            captured_stream(),
             outfile
         )
     except BufferError as e:
