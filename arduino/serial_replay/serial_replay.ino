@@ -1,4 +1,5 @@
-
+#define LED_DEBUG 0
+#include "Led.h"
 /*
  * Test receiving bytes from a host.
  * 
