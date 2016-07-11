@@ -1,4 +1,6 @@
 from __future__ import print_function, division
+
+import os
 from collections import namedtuple
 import struct
 import sys
@@ -8,6 +10,7 @@ import io
 import MTS
 from MTS.word.HeaderWord import HeaderWord
 from MTS.Packet import packet_tostring
+from apscheduler.schedulers.blocking import BlockingScheduler
 
 DEBUG = False
 
@@ -76,29 +79,29 @@ def live_stream(tty='cu.SLAB_USBtoUART'):
     import serial
     return serial.Serial('/dev/{}'.format(tty), 19200)
 
-
-def setInterval(interval):
-    import threading
-
-    def decorator(function):
-        def wrapper(*args, **kwargs):
-            stopped = threading.Event()
-
-            def loop(): # executed in another thread
-                while not stopped.wait(interval): # until stopped
-                    function(*args, **kwargs)
-
-            t = threading.Thread(target=loop)
-            t.daemon = True # stop if the program exits
-            t.start()
-            return stopped
-        return wrapper
-    return decorator
-
+#
+# def setInterval(interval):
+#     import threading
+#
+#     def decorator(function):
+#         def wrapper(*args, **kwargs):
+#             stopped = threading.Event()
+#
+#             def loop(): # executed in another thread
+#                 while not stopped.wait(interval): # until stopped
+#                     function(*args, **kwargs)
+#
+#             t = threading.Thread(target=loop)
+#             t.daemon = True # stop if the program exits
+#             t.start()
+#             return stopped
+#         return wrapper
+#     return decorator
+#
 elapsed_millis = 0
 
 
-@setInterval(MTS.Packet.PACKET_INTERVAL/1000)
+# @setInterval(MTS.Packet.PACKET_INTERVAL/1000)
 def send_packet():
     global elapsed_millis, input_stream, output_stream
     packet = read_packets(input_stream).next()
@@ -145,11 +148,20 @@ if __name__ == '__main__':
     #     if elapsed_millis > 10000:
     #         break
 
-    from threading import _sleep
-    stop = send_packet()  # start timer, the first call is in .5 seconds
-    while elapsed_millis < 10000:
-        _sleep(1)
+    scheduler = BlockingScheduler()
+    scheduler.add_job(send_packet, 'interval', seconds=MTS.Packet.PACKET_INTERVAL/1000)
+    print('Press Ctrl+{0} to exit'.format('Break' if os.name == 'nt' else 'C'))
 
-    stop.set()
+    try:
+        scheduler.start()
+    except (KeyboardInterrupt, SystemExit):
+        pass
+
+    # from threading import _sleep
+    # stop = send_packet()  # start timer, the first call is in .5 seconds
+    # while elapsed_millis < 10000:
+    #     _sleep(1)
+    #
+    # stop.set()
 
     print('Total Time: {} seconds'.format(int(elapsed_millis / 1000)))
