@@ -122,7 +122,7 @@ class Packet(object):
             # Must be in 'Normal' function
             if 'Normal' is not f.function():
                 raise ValueError('AFR not available. {}'.format(f.function()))
-            l = getattr(self._subpackets[1], 'ƛ')
+            l = getattr(self._subpackets[1], 'lambda')
             return (l.lambda_value() + 500) * f.air_fuel_value() / 10000
 
 
@@ -261,7 +261,7 @@ class SubPacket(ctypes.Union):
     _fields_ = [
         ('word', ctypes.c_uint16),
         ('function', FunctionBits),
-        ('ƛ', LambdaBits),
+        ('lambda', LambdaBits),  # use getattr(sub_packet, 'lambda') to avoid reserved word
         ('battery', BatteryBits),
         ('aux', AuxBits)
     ]
