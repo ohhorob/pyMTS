@@ -1,7 +1,6 @@
 from __future__ import print_function, division
 
 import os
-from collections import namedtuple
 import struct
 import sys
 import time
@@ -77,39 +76,52 @@ def read_packets(serial_input):
 
 def live_stream(tty='cu.SLAB_USBtoUART'):
     import serial
-    return serial.Serial('/dev/{}'.format(tty), 19200)
+    from serial import SerialException
+    try:
+        return serial.Serial('/dev/{}'.format(tty), 19200)
+    except SerialException as e:
+        print("Failed to open port", file=sys.stderr)
+    return None
 
-#
-# def setInterval(interval):
-#     import threading
-#
-#     def decorator(function):
-#         def wrapper(*args, **kwargs):
-#             stopped = threading.Event()
-#
-#             def loop(): # executed in another thread
-#                 while not stopped.wait(interval): # until stopped
-#                     function(*args, **kwargs)
-#
-#             t = threading.Thread(target=loop)
-#             t.daemon = True # stop if the program exits
-#             t.start()
-#             return stopped
-#         return wrapper
-#     return decorator
-#
+
 elapsed_millis = 0
+previous_send_time = time.time()
+send_count = 0
+packet = None
+send_byte_buffer = None
+start_time = None
 
 
-# @setInterval(MTS.Packet.PACKET_INTERVAL/1000)
 def send_packet():
-    global elapsed_millis, input_stream, output_stream
+    global packet, \
+        send_byte_buffer, \
+        send_count, \
+        elapsed_millis, \
+        input_stream, output_stream, \
+        previous_send_time, start_time
+    now = time.time()
+    delta = (now - previous_send_time) * 1000.0
+    previous_send_time = now
+    if send_byte_buffer is not None:
+        start_time = now
+        elapsed = now - start_time
+        output_stream.write(send_byte_buffer)
+        output_stream.flush()
+        send_count += 1
+        elapsed_millis += MTS.Packet.PACKET_INTERVAL
+        print("{} {:1f} {:12d} {}\n".format(delta, int(elapsed_millis), packet_tostring(packet)))
+
     packet = read_packets(input_stream).next()
-    print("{:12d} {}\n".format(int(elapsed_millis), packet_tostring(packet)))
-    elapsed_millis += MTS.Packet.PACKET_INTERVAL
-    b = ''.join([struct.pack('>H', h) for h in packet])
-    output_stream.write(b)
-    output_stream.flush()
+    send_byte_buffer = ''.join([struct.pack('>H', h) for h in packet])
+
+
+# Debug a chunk; Compare to HexFiend to confirm serial read
+def debug_chunk():
+
+    firstchunk = bytearray(b'0' * 64)
+    input_stream.readinto(firstchunk)
+    print(' '.join('{:02X}'.format(c) for c in firstchunk))
+    print('  '.join(['{:04X}'.format(((firstchunk[idx] & 0x00FF) << 8) | firstchunk[idx + 1]) for idx in range(0, 63, 2)]))
 
 
 if __name__ == '__main__':
@@ -123,12 +135,6 @@ if __name__ == '__main__':
     print('Reading from: {}'.format(input_file))
     output_stream = live_stream()
 
-    # Debug a chunk; Compare to HexFiend to confirm serial read
-    #
-    # firstchunk = bytearray(b'0' * 64)
-    # input_stream.readinto(firstchunk)
-    # print(' '.join('{:02X}'.format(c) for c in firstchunk))
-    # print('  '.join(['{:04X}'.format(((firstchunk[idx] & 0x00FF) << 8) | firstchunk[idx + 1]) for idx in range(0, 63, 2)]))
 
     # Debug first packet
     #
