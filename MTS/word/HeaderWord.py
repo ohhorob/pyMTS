@@ -36,6 +36,9 @@ class HeaderWord(ctypes.BigEndianStructure):
     def is_data(self):
         return self.DataOrResponse > 0
 
+    def is_response(self):
+        return self.DataOrResponse < 1
+
     def can_log(self):
         return self.LogCapable > 0
 

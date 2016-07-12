@@ -5,6 +5,7 @@ import struct
 import sys
 import time
 import io
+import logging
 
 import MTS
 from MTS.word.HeaderWord import HeaderWord
@@ -20,7 +21,7 @@ def scan_to_headerword(serial_input, maximum_bytes=9999, header_magic=HeaderWord
     :param header_magic:
     :param maximum_bytes:
     :param serial_input:
-    :rtype : int
+    :rtype : MTS.Header.Header
     """
     headerword = 0x0000
     bytecount = 0
@@ -43,35 +44,21 @@ def scan_to_headerword(serial_input, maximum_bytes=9999, header_magic=HeaderWord
     try:
         h = MTS.Header.Header(word=headerword)
         if DEBUG: print("Found header word. 0x{:04X}".format(h.word))
+        return h
     except ValueError as e:
         print("Invalid header word 0x{:04X}".format(headerword))
         raise e
-
-    return headerword
 
 
 def read_packets(serial_input):
     """
     Consume bytes from input, creating packet frames of words
+    :rtype: MTS.Packet.Packet
     :type serial_input:
     """
     while 1:
-        headerword = scan_to_headerword(serial_input)
-        # Read the bytes that are required to complete the packet
-        packet_wordlength = (headerword & 0x1000 << 7) | headerword & 0x007F
-        packet_bytelength = packet_wordlength * 2
-        if DEBUG: print('words={:d}; bytes={:d}'.format(packet_wordlength, packet_bytelength))
-        bodybytes = bytearray(b'0' * packet_bytelength)
-        if DEBUG: print(' '.join(['{:02X}'.format(b) for b in bodybytes]))
-
-        serial_input.readinto(bodybytes)
-
-        # Take pairs of body bytes for to return words of data
-        words = [headerword]
-        words.extend([(bodybytes[idx] << 8) | bodybytes[idx + 1] for idx in range(0, packet_bytelength-1, 2)])
-        words_hexstring = ' '.join(['{:04X}'.format(w) for w in words])
-        print(words_hexstring)
-        yield words
+        header = scan_to_headerword(serial_input)
+        yield header.read_packet(serial_input)
 
 
 def live_stream(tty='cu.SLAB_USBtoUART'):
@@ -109,10 +96,16 @@ def send_packet():
         output_stream.flush()
         send_count += 1
         elapsed_millis += MTS.Packet.PACKET_INTERVAL
-        print("{} {:1f} {:12d} {}\n".format(delta, int(elapsed_millis), packet_tostring(packet)))
+        print("{:05d} {:1f} {:12d} {}\n".format(
+                send_count,
+                delta,
+                int(elapsed_millis),
+                packet
+        ))
 
     packet = read_packets(input_stream).next()
-    send_byte_buffer = ''.join([struct.pack('>H', h) for h in packet])
+    words = packet.words()
+    send_byte_buffer = ''.join([struct.pack('>H', h) for h in words])
 
 
 # Debug a chunk; Compare to HexFiend to confirm serial read
@@ -125,6 +118,7 @@ def debug_chunk():
 
 
 if __name__ == '__main__':
+    logging.basicConfig()
     # Open input stream
     input_file = 'openlog-20160710-001.TXT'
     input_stream = io.open(
@@ -153,6 +147,10 @@ if __name__ == '__main__':
     #     output_stream.flush()
     #     if elapsed_millis > 10000:
     #         break
+
+    # Debug with a single packet
+    send_packet()
+    send_packet()
 
     scheduler = BlockingScheduler()
     scheduler.add_job(send_packet, 'interval', seconds=MTS.Packet.PACKET_INTERVAL/1000)

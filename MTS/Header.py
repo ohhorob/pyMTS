@@ -2,8 +2,11 @@
 # ISP2 Frame
 # 16 bit words in big endian order
 # 2 bytes, arriving in [Most-Significant], [Least-Significant]
+from __future__ import print_function
+
 import ctypes
 
+from MTS.Packet import Packet
 from MTS.word.HeaderWord import HeaderWord
 
 c_uint8 = ctypes.c_uint8
@@ -26,6 +29,24 @@ class Header(ctypes.Union):
 
     def word_count(self):
         return (self.b.LengthHigh << 7) | self.b.LengthLow
+
+    def read_packet(self, in_stream, debug_stream=None):
+        # Read the bytes that are required to complete the packet
+        packet_wordlength = (self.word & 0x1000 << 7) | self.word & 0x007F
+        packet_bytelength = packet_wordlength * 2
+        if debug_stream: print('words={:d}; bytes={:d}'.format(packet_wordlength, packet_bytelength), file=debug_stream)
+        bodybytes = bytearray(b'0' * packet_bytelength)
+        if debug_stream: print(' '.join(['{:02X}'.format(b) for b in bodybytes]))
+
+        in_stream.readinto(bodybytes)
+
+        # Take pairs of body bytes for to return words of data
+        body = [(bodybytes[idx] << 8) | bodybytes[idx + 1] for idx in range(0, packet_bytelength-1, 2)]
+        return Packet(self, body)
+
+        # words.extend()
+        # words_hexstring = ' '.join(['{:04X}'.format(w) for w in words])
+        # print(words_hexstring)
 
     def desc(self):
         return '0x{:04X} {} Len={:d} words '.format(
