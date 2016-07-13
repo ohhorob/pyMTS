@@ -45,4 +45,5 @@ add_custom_target(
     WORKING_DIRECTORY ${CMAKE_CURRENT_SOURCE_DIR}
 )
 
-add_executable(${PROJECT_NAME} ${SRC_LIST})
+add_executable(PROJECT_NAME src/demo.ino)
+set_target_properties(PROJECT_NAME PROPERTIES LINKER_LANGUAGE CXX)
