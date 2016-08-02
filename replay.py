@@ -1,18 +1,34 @@
 from __future__ import print_function, division
 
+import io
+import logging
 import os
 import struct
 import sys
 import time
-import io
-import logging
+
+from apscheduler.schedulers.blocking import BlockingScheduler
+from blessed import Terminal
 
 import MTS
-from MTS.word.HeaderWord import HeaderWord
 from MTS.Packet import packet_tostring
-from apscheduler.schedulers.blocking import BlockingScheduler
+from MTS.word.HeaderWord import HeaderWord
 
 DEBUG = False
+if 'PYDEVD_EGG' in os.environ:
+    # Turn on remote-debug
+    env_term = os.environ['TERM']
+    env_pydevd = os.environ['PYDEVD_EGG']
+
+    import sys
+    sys.path.append(env_pydevd)
+    import pydevd
+
+    debughost = '127.0.0.1'
+    pydevd.settrace(debughost, port=7777, suspend=False)
+    # Restore original TERM after pydevd stole it
+    if env_term:
+        os.environ['TERM'] = env_term
 
 
 def scan_to_headerword(serial_input, maximum_bytes=9999, header_magic=HeaderWord.MAGIC_MASK):
@@ -96,12 +112,13 @@ def send_packet():
         output_stream.flush()
         send_count += 1
         elapsed_millis += MTS.Packet.PACKET_INTERVAL
-        print("{:05d} {:1f} {:12d} {}\n".format(
-                send_count,
-                delta,
-                int(elapsed_millis),
-                packet
-        ))
+        with _t.location(0, _t.height - 5):
+            print("{:05d} {:1f} {:12d} {}\n".format(
+                    send_count,
+                    delta,
+                    int(elapsed_millis),
+                    packet
+            ))
 
     packet = read_packets(input_stream).next()
     words = packet.words()
@@ -117,6 +134,8 @@ def debug_chunk():
     print('  '.join(['{:04X}'.format(((firstchunk[idx] & 0x00FF) << 8) | firstchunk[idx + 1]) for idx in range(0, 63, 2)]))
 
 
+_t = Terminal(force_styling=True)
+
 if __name__ == '__main__':
     logging.basicConfig()
     # Open input stream
@@ -126,46 +145,60 @@ if __name__ == '__main__':
             mode='rb',
             buffering=io.DEFAULT_BUFFER_SIZE
     )
-    print('Reading from: {}'.format(input_file))
-    output_stream = live_stream()
+    with _t.hidden_cursor(), \
+         _t.location(), \
+         _t.cbreak(), \
+         _t.fullscreen():
+
+        print(_t.bold('Reading from: {}'.format(input_file)))
+        output_stream = live_stream()
+
+        # Debug first packet
+        #
+        # p = read_packets(input_stream).next()
+        # b = ''.join([struct.pack('>H', h) for h in p])
+        # output_stream.write(b)
 
 
-    # Debug first packet
-    #
-    # p = read_packets(input_stream).next()
-    # b = ''.join([struct.pack('>H', h) for h in p])
-    # output_stream.write(b)
+        #
+        # from MTS.Packet import packet_tostring
+        # for p in read_packets(input_stream):
+        #     print("{:12d} {}\n".format(int(elapsed_millis), packet_tostring(p)))
+        #     elapsed_millis += MTS.Packet.PACKET_INTERVAL
+        #     b = ''.join([struct.pack('>H', h) for h in p])
+        #     output_stream.write(b)
+        #     output_stream.flush()
+        #     if elapsed_millis > 10000:
+        #         break
 
+        # Debug with a single packet
+        # send_packet()
+        # send_packet()
 
-    #
-    # from MTS.Packet import packet_tostring
-    # for p in read_packets(input_stream):
-    #     print("{:12d} {}\n".format(int(elapsed_millis), packet_tostring(p)))
-    #     elapsed_millis += MTS.Packet.PACKET_INTERVAL
-    #     b = ''.join([struct.pack('>H', h) for h in p])
-    #     output_stream.write(b)
-    #     output_stream.flush()
-    #     if elapsed_millis > 10000:
-    #         break
+        scheduler = BlockingScheduler()
+        scheduler.add_job(send_packet, 'interval', seconds=MTS.Packet.PACKET_INTERVAL / 1000)
+        print('Press Ctrl+{0} to exit'.format('Break' if os.name == 'nt' else 'C'))
 
-    # Debug with a single packet
-    send_packet()
-    send_packet()
+        while True:
+            terminal_input = _t.inkey(timeout=5)
 
-    scheduler = BlockingScheduler()
-    scheduler.add_job(send_packet, 'interval', seconds=MTS.Packet.PACKET_INTERVAL/1000)
-    print('Press Ctrl+{0} to exit'.format('Break' if os.name == 'nt' else 'C'))
+            if terminal_input is None:
+                with _t.location(2, 4):
+                    print('Input timeout.')
+                    continue
+            else:
+                with _t.location(2, 2):
+                    print('Key={} Name={} Code={}\n'.format(terminal_input, terminal_input.name, terminal_input.code))
+                    print('repr = {}'.format(repr(terminal_input)))
 
-    try:
-        scheduler.start()
-    except (KeyboardInterrupt, SystemExit):
-        pass
+            if terminal_input.code == 265:  # F1
+                print('Quitting.')
+                break
 
-    # from threading import _sleep
-    # stop = send_packet()  # start timer, the first call is in .5 seconds
-    # while elapsed_millis < 10000:
-    #     _sleep(1)
-    #
-    # stop.set()
+            if terminal_input.name == 'KEY_F8':
+                try:
+                    scheduler.start()
+                except (KeyboardInterrupt, SystemExit):
+                    pass
 
-    print('Total Time: {} seconds'.format(int(elapsed_millis / 1000)))
+        print('Total Time: {} seconds'.format(int(elapsed_millis / 1000)))

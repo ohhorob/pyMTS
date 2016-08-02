@@ -4,7 +4,7 @@ import ctypes
 
 import MTS
 
-PACKET_INTERVAL = 81.92 # 8000000 / 655360
+PACKET_INTERVAL = 81.92  # 8000000 / 655360
 
 
 def packet_tostring(packet):
@@ -106,10 +106,11 @@ class Packet(object):
         p = SubPacket()
         p.word = word
         self._subpackets.append(p)
+        # TODO: increment the header length to
 
     def words(self):
         """
-
+        Re-assemble the bytes of the whole packet, word-by-word
         :rtype: list
         """
         return [self._header.word] + [p.word for p in self._subpackets]
