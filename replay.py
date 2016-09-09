@@ -4,15 +4,19 @@ import io
 import logging
 import os
 import struct
-import sys
 import time
 
-from apscheduler.schedulers.blocking import BlockingScheduler
+from apscheduler.events import EVENT_JOB_ERROR
+from apscheduler.schedulers.background import BackgroundScheduler
 from blessed import Terminal
+from blessed.keyboard import Keystroke
 
 import MTS
 from MTS.Packet import packet_tostring
 from MTS.word.HeaderWord import HeaderWord
+from termapp.Display import Display
+
+from termapp.settings import Settings
 
 DEBUG = False
 if 'PYDEVD_EGG' in os.environ:
@@ -83,7 +87,7 @@ def live_stream(tty='cu.SLAB_USBtoUART'):
     try:
         return serial.Serial('/dev/{}'.format(tty), 19200)
     except SerialException as e:
-        print("Failed to open port", file=sys.stderr)
+        _log.warn("Failed to open port: %s", e)
     return None
 
 
@@ -93,6 +97,7 @@ send_count = 0
 packet = None
 send_byte_buffer = None
 start_time = None
+input_stream = None
 
 
 def send_packet():
@@ -113,7 +118,7 @@ def send_packet():
         send_count += 1
         elapsed_millis += MTS.Packet.PACKET_INTERVAL
         with _t.location(0, _t.height - 5):
-            print("{:05d} {:1f} {:12d} {}\n".format(
+            print(_t.clear_eol + "{:05d} {:.1f} {:12d} {}\n".format(
                     send_count,
                     delta,
                     int(elapsed_millis),
@@ -135,70 +140,63 @@ def debug_chunk():
 
 
 _t = Terminal(force_styling=True)
+_s = Settings(path='settings.json')
+_log = logging.getLogger('replay')
+
+
+def open_input(path=None):
+    global input_stream
+    # Open input stream
+    input_file = path if path is not None else 'data/openlog-20160710-001.TXT'
+    print(_t.bold('Reading from: {}'.format(input_file)))
+    input_stream = io.open(
+        input_file,
+        mode='rb',
+        buffering=io.DEFAULT_BUFFER_SIZE
+    )
+    return input_stream
+
+
+def add_sender():
+    global scheduler, sendjob
+
+    sendjob = scheduler.add_job(send_packet, 'interval', seconds=MTS.Packet.PACKET_INTERVAL / 1000)
+
+    if not scheduler.running:
+        scheduler.start()
+
 
 if __name__ == '__main__':
     logging.basicConfig()
-    # Open input stream
-    input_file = 'openlog-20160710-001.TXT'
-    input_stream = io.open(
-            input_file,
-            mode='rb',
-            buffering=io.DEFAULT_BUFFER_SIZE
-    )
-    with _t.hidden_cursor(), \
-         _t.location(), \
-         _t.cbreak(), \
-         _t.fullscreen():
 
-        print(_t.bold('Reading from: {}'.format(input_file)))
-        output_stream = live_stream()
+    d = Display(_t)
 
-        # Debug first packet
-        #
-        # p = read_packets(input_stream).next()
-        # b = ''.join([struct.pack('>H', h) for h in p])
-        # output_stream.write(b)
+    def listener(event):
+        if event.exception:
+            sendjob.remove()
 
+    scheduler = BackgroundScheduler()
+    scheduler.add_listener(listener, EVENT_JOB_ERROR)
+    sendjob = None
+    # Suppress exception logging on default executor
+    logging.getLogger('apscheduler.executors.default').setLevel('CRITICAL')
 
-        #
-        # from MTS.Packet import packet_tostring
-        # for p in read_packets(input_stream):
-        #     print("{:12d} {}\n".format(int(elapsed_millis), packet_tostring(p)))
-        #     elapsed_millis += MTS.Packet.PACKET_INTERVAL
-        #     b = ''.join([struct.pack('>H', h) for h in p])
-        #     output_stream.write(b)
-        #     output_stream.flush()
-        #     if elapsed_millis > 10000:
-        #         break
+    # open_input(path='data/openlog-20160807-002.TXT')  # return from Wilder Ranch
+    open_input(path='data/openlog-20160807-001.TXT')  # return from Wilder Ranch
+    output_stream = live_stream()
 
-        # Debug with a single packet
-        # send_packet()
-        # send_packet()
+    # Install input handlers (callbacks for commands)
+    d.add_command('send', add_sender)
+    d.add_command('pause', lambda: sendjob.pause())
+    d.add_command('resume', lambda: sendjob.resume())
 
-        scheduler = BlockingScheduler()
-        scheduler.add_job(send_packet, 'interval', seconds=MTS.Packet.PACKET_INTERVAL / 1000)
-        print('Press Ctrl+{0} to exit'.format('Break' if os.name == 'nt' else 'C'))
+    # Restart sending: <shift> + F8
+    def restart():
+        global sendjob
+        sendjob.remove()
+        add_sender()
 
-        while True:
-            terminal_input = _t.inkey(timeout=5)
+    d.add_key(Keystroke(ucs='', code=284, name='KEY_F20'), restart)
 
-            if terminal_input is None:
-                with _t.location(2, 4):
-                    print('Input timeout.')
-                    continue
-            else:
-                with _t.location(2, 2):
-                    print('Key={} Name={} Code={}\n'.format(terminal_input, terminal_input.name, terminal_input.code))
-                    print('repr = {}'.format(repr(terminal_input)))
-
-            if terminal_input.code == 265:  # F1
-                print('Quitting.')
-                break
-
-            if terminal_input.name == 'KEY_F8':
-                try:
-                    scheduler.start()
-                except (KeyboardInterrupt, SystemExit):
-                    pass
-
-        print('Total Time: {} seconds'.format(int(elapsed_millis / 1000)))
+    # Start the display
+    d.start()

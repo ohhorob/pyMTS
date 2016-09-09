@@ -82,18 +82,19 @@ class Packet(object):
             self._auxstart = 0
 
     def __str__(self):
-        result = "Rec={}".format(self._header.b.Recording)
+        # result = "Rec={}".format(self._header.b.Recording)
+        result = ""
         if self._has_lambda:
             f = getattr(self._subpackets[0], 'function')
             result += " {}={} {}".format(f.function(), f.air_fuel_value(), f.air_fuel_units())
             try:
-                result += " AFR={:f}".format(self.air_fuel_ratio())
+                result += " AFR={:4.3f}".format(self.air_fuel_ratio())
             except ValueError as afr_error:
                 result += " {}".format(afr_error.message)
 
         if self._auxstart > 0:
             for channel, a in enumerate([p.aux for p in self._subpackets[self._auxstart:]]):
-                result += " ch{:02d}={:4.4f}V".format(channel, a.volts())
+                result += " ch{:02d}={:4.3f}V".format(channel, a.volts())
         return result
 
     def add_word(self, word):
@@ -121,15 +122,20 @@ class Packet(object):
             # Resolve the Function packet from first sub-packet union
             f = self._subpackets[0].function
             # Must be in 'Normal' function
-            if 'Normal' is not f.function():
-                raise ValueError('AFR not available. {}'.format(f.function()))
             l = getattr(self._subpackets[1], 'lambda')
-            return (l.lambda_value() + 500) * f.air_fuel_value() / 10000
+            if 'Normal' is f.function():
+                return (l.lambda_value() + 500) * f.air_fuel_value() / 10000
+            elif 'O2' is f.function():
+                return l.lambda_value() / 10.0
+            elif 'Warmup' is f.function():
+                return l.lambda_value() / 10.0
+            else:
+                raise ValueError('NA: {}'.format(f.function()))
 
 
 Functions = {
     0b000: 'Normal',
-    0b001: 'O2 Tenths',
+    0b001: 'O2',
     0b010: 'Calibrating Air',
     0b011: 'Cal Required',
     0b100: 'Warmup',
