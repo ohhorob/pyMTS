@@ -54,3 +54,4 @@ docs/_build/
 target/
 .idea
 /virtualenv
+.DS_Store

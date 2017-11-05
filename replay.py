@@ -112,7 +112,7 @@ def send_packet():
     previous_send_time = now
     if send_byte_buffer is not None:
         start_time = now
-        elapsed = now - start_time
+        # elapsed = now - start_time
         output_stream.write(send_byte_buffer)
         output_stream.flush()
         send_count += 1

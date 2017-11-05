@@ -37,8 +37,10 @@ def merge_analyzers(inputs, add_header=False):
         csv.insert(0, ','.join(columns))
     return csv
 
+
 # Take a reference to the Socket API bridge
 _s = saleae.Saleae()
+
 
 if __name__ == '__main__':
     import tempfile
