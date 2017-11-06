@@ -32,16 +32,21 @@ class Header(ctypes.Union):
 
     def read_packet(self, in_stream, debug_stream=None):
         # Read the bytes that are required to complete the packet
-        packet_wordlength = (self.word & 0x1000 << 7) | self.word & 0x007F
-        packet_bytelength = packet_wordlength * 2
-        if debug_stream: print('words={:d}; bytes={:d}'.format(packet_wordlength, packet_bytelength), file=debug_stream)
-        bodybytes = bytearray(b'0' * packet_bytelength)
-        if debug_stream: print(' '.join(['{:02X}'.format(b) for b in bodybytes]))
+        wordslen = (self.word & 0x1000 << 7) | self.word & 0x007F
+        byteslen = wordslen * 2
+        if debug_stream:
+            print(
+                'words={:d}; bytes={:d}'.format(wordslen, byteslen),
+                file=debug_stream
+            )
+        bodybytes = bytearray(b'0' * byteslen)
+        if debug_stream:
+            print(' '.join(['{:02X}'.format(b) for b in bodybytes]), file=debug_stream)
 
         in_stream.readinto(bodybytes)
 
         # Take pairs of body bytes for to return words of data
-        body = [(bodybytes[idx] << 8) | bodybytes[idx + 1] for idx in range(0, packet_bytelength-1, 2)]
+        body = [(bodybytes[idx] << 8) | bodybytes[idx + 1] for idx in range(0, byteslen-1, 2)]
         return Packet(self, body)
 
         # words.extend()

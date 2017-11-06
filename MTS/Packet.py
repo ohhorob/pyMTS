@@ -3,6 +3,7 @@ from __future__ import division
 import ctypes
 
 import MTS
+import Header
 
 PACKET_INTERVAL = 81.92  # 8000000 / 655360
 
@@ -10,15 +11,14 @@ PACKET_INTERVAL = 81.92  # 8000000 / 655360
 def packet_tostring(packet):
     # chunks = ["Size={:02d}".format(len(packet))]
     # Header word
-    from MTS.Header import Header
-    header = Header()
+    header = Header.Header()
     header.word = packet[0]
     chunks = [header.desc()]
 
     auxstart = 1
 
     # Optional Function&Lambda&Battery
-    if packet[1] & 0x80 == 0x80:
+    if packet[1] & 0x4200 == 0x4200:
         fbits = SubPacket()
         fbits.word = packet[1]
         lbits = SubPacket()
@@ -73,7 +73,7 @@ class Packet(object):
             raise ValueError('LM-1 Not implemented.')
 
         # Channels
-        if len(body) >= self._auxstart:
+        if len(body) > self._auxstart:
             for channel, auxword in enumerate(body[self._auxstart:]):
                 abits = SubPacket()
                 abits.word = auxword
@@ -81,16 +81,44 @@ class Packet(object):
         else:
             self._auxstart = 0
 
+    def data_line(self):
+        result = ""
+        if self._has_lambda:
+            f = getattr(self._subpackets[0], 'function')
+            lambda_packet = getattr(self._subpackets[1], 'lambda')
+            if f.function() is 'Warmup':
+                result += "W      {: 4d}%".format(lambda_packet.lambda_value())
+            else:
+                result += f.function()[0]
+                try:
+                    result += " AFR={:5.3f}".format(self.air_fuel_ratio())
+                except ValueError as afr_error:
+                    result += " {}".format(afr_error.message)
+        else:
+            return "<NO LAMBDA>"
+
+        if self._auxstart > 0:
+            ssi4 = [p.aux for p in self._subpackets[self._auxstart:]]
+            result += " {:05d} rpm".format(ssi4[0].rpm())
+            result += " {:05d} raw".format(ssi4[1].aux())
+            result += " {:05d} raw".format(ssi4[2].aux())
+            result += " {:05d} raw".format(ssi4[3].aux())
+        return result
+
     def __str__(self):
         # result = "Rec={}".format(self._header.b.Recording)
         result = ""
         if self._has_lambda:
             f = getattr(self._subpackets[0], 'function')
-            result += " {}={} {}".format(f.function(), f.air_fuel_value(), f.air_fuel_units())
-            try:
-                result += " AFR={:4.3f}".format(self.air_fuel_ratio())
-            except ValueError as afr_error:
-                result += " {}".format(afr_error.message)
+            lambda_packet = getattr(self._subpackets[1], 'lambda')
+            if f.function() is 'Warmup':
+                result += " Warmup {} % of operating temp".format(lambda_packet.lambda_value())
+            else:
+                result += " {}={} {}".format(f.function(), f.air_fuel_value(), f.air_fuel_units())
+                try:
+                    result += " AFR={:4.3f}".format(self.air_fuel_ratio())
+                except ValueError as afr_error:
+                    result += " {}".format(afr_error.message)
 
         if self._auxstart > 0:
             for channel, a in enumerate([p.aux for p in self._subpackets[self._auxstart:]]):
@@ -170,7 +198,9 @@ class FunctionBits(ctypes.BigEndianStructure):
         f = self.function()
         if f is 'Normal':
             return 'ratio'
-        if f in ('02 Tenths', 'Warmup'):
+        if f is 'Warmup':
+            return '% temp'
+        if f is '02 Tenths':
             return '%'
         if f is 'Calibrating Heat':
             return 'count'
@@ -181,6 +211,7 @@ class FunctionBits(ctypes.BigEndianStructure):
         v = self._value()
         f = self.function()
         if f in ('02 Tenths', 'Warmup'):
+            # Warmup: Lambda value is temp in 1/10%
             v *= 0.10
         elif f in ('Calibrating Air', 'Cal Required',  'Reserved'):
             v = None

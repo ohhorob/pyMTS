@@ -81,7 +81,7 @@ def read_packets(serial_input):
         yield header.read_packet(serial_input)
 
 
-def live_stream(tty='cu.SLAB_USBtoUART'):
+def live_stream(tty='cu.UC-232AC'):
     import serial
     from serial import SerialException
     try:
@@ -182,7 +182,7 @@ if __name__ == '__main__':
     logging.getLogger('apscheduler.executors.default').setLevel('CRITICAL')
 
     # open_input(path='data/openlog-20160807-002.TXT')  # return from Wilder Ranch
-    open_input(path='data/openlog-20160807-001.TXT')  # return from Wilder Ranch
+    # open_input(path='data/openlog-20160807-001.TXT')  # return from Wilder Ranch
     output_stream = live_stream()
 
     # Install input handlers (callbacks for commands)
